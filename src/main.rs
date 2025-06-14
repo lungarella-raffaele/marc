@@ -22,12 +22,11 @@
 /// TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH
 /// THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ///
-
 use std::env;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     if let Err(e) = marc::run(args) {
-   		eprintln!("{e}")
+        eprintln!("{e}")
     }
 }
