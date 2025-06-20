@@ -1,15 +1,14 @@
+use std::env;
 use std::error::Error;
+use std::fs::{self};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-use rusqlite::Connection;
+mod temporal;
 
 enum Cmd {
-    List {
-        list_name: Option<String>,
-    },
-    Add {
-        content: String,
-        list_name: Option<String>,
-    },
+    List,
+    Add { note: String },
     Help,
     Version,
 }
@@ -23,18 +22,12 @@ impl Cmd {
         match args[1].as_str() {
             "--version" | "-v" => Ok(Cmd::Version),
             "--help" | "-h" => Ok(Cmd::Help),
-            "ls" | "list" => Ok(Cmd::List {
-                list_name: args.get(2).cloned(),
-            }),
+            "ls" | "list" => Ok(Cmd::List),
             "add" => {
                 let content = args.get(2);
-                let list_name = args.get(3).cloned();
 
                 match content {
-                    Some(str) => Ok(Cmd::Add {
-                        content: str.clone(),
-                        list_name,
-                    }),
+                    Some(str) => Ok(Cmd::Add { note: str.clone() }),
                     None => Err(format!("Add command needs content")),
                 }
             }
@@ -44,8 +37,8 @@ impl Cmd {
 
     fn execute(&self) -> Result<(), Box<dyn Error>> {
         match self {
-            Cmd::List { list_name } => list(list_name),
-            Cmd::Add { content, list_name } => add(content, list_name),
+            Cmd::List => list(),
+            Cmd::Add { note } => add(note),
             Cmd::Version => {
                 let env = env!("CARGO_PKG_VERSION");
                 let name = env!("CARGO_PKG_NAME");
@@ -70,70 +63,44 @@ fn help() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-struct DB {}
-impl DB {
-    pub fn connect() -> Result<Connection, Box<dyn Error>> {
-        let db_path = format!("{}/marc/", env!("HOME"));
-        let conn = Connection::open(db_path)?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS list (
-				id INTEGER PRIMARY KEY NOT NULL,
-				name TEXT NOT NULL UNIQUE
-			)",
-            (),
-        )?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS note (
-				id INTEGER PRIMARY KEY NOT NULL,
-				content TEXT NOT NULL,
-				list_id INTEGER NOT NULL,
-				FOREIGN KEY (list_id) REFERENCES list(id)
-			)",
-            (),
-        )?;
-
-        conn.execute("INSERT OR IGNORE INTO list (name) VALUES ('default')", ())?;
-
-        Ok(conn)
-    }
-}
-
 /// Add command -- Adds an entry to a list
-fn add(content: &String, list_name: &Option<String>) -> Result<(), Box<dyn Error>> {
-    let conn = DB::connect()?;
-    let list_name = list_name.as_deref().unwrap_or("default");
+fn add(content: &String) -> Result<(), Box<dyn Error>> {
+    let file_path = get_file_path()?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file_path)?;
+    writeln!(file, "- [ ] {content}")?;
 
-    let added = conn.execute(
-	    "INSERT INTO note (content, list_id)
-	    VALUES (?1, (SELECT id FROM list WHERE name = ?2))",
-        (content, list_name),
-    )?;
-
-    match added {
-        0 => Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to insert note",
-        ))),
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 // List command -- Shows notes for a given list
-fn list(list_name: &Option<String>) -> Result<(), Box<dyn Error>> {
-    let conn = DB::connect()?;
-    let list_name = list_name.as_deref().unwrap_or("default");
+fn list() -> Result<(), Box<dyn Error>> {
+    let file_path = get_file_path()?;
+    let content = fs::read_to_string(file_path)?;
+    println!("{content}");
+    Ok(())
+}
 
-    let mut stmt = conn.prepare(
-        "SELECT content FROM note WHERE list_id = (SELECT id FROM list WHERE name = ?1)",
-    )?;
+fn get_file_path() -> Result<String, Box<dyn Error>> {
+	let today = temporal::today();
 
-    let note_iter = stmt.query_map([list_name], |row| Ok(row.get::<_, String>(0)?))?;
+    let home = env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE")) // Windows fallback TODO Testing
+        .expect("Home directory not set");
 
-    for note in note_iter {
-        println!("{}", note?);
+    let dir_path = PathBuf::from(&home)
+        .join("marc")
+        .join(today.month.to_string());
+
+    let path = Path::new(&dir_path);
+    if !path.exists() {
+        fs::create_dir_all(&dir_path)?;
     }
 
-    Ok(())
+    let file_path = PathBuf::from(&dir_path)
+        .join(format!("{}.md", today.day));
+
+    Ok(file_path.to_string_lossy().to_string())
 }
