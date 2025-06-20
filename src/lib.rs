@@ -1,139 +1,343 @@
+use std::env;
 use std::error::Error;
+use std::fs::{self};
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::process::Command;
 
-use rusqlite::Connection;
-
-enum Cmd {
-    List {
-        list_name: Option<String>,
-    },
-    Add {
-        content: String,
-        list_name: Option<String>,
-    },
-    Help,
-    Version,
-}
-
-impl Cmd {
-    fn new(args: &[String]) -> Result<Cmd, String> {
-        if args.len() == 1 {
-            return Ok(Cmd::Help);
-        }
-
-        match args[1].as_str() {
-            "--version" | "-v" => Ok(Cmd::Version),
-            "--help" | "-h" => Ok(Cmd::Help),
-            "ls" | "list" => Ok(Cmd::List {
-                list_name: args.get(2).cloned(),
-            }),
-            "add" => {
-                let content = args.get(2);
-                let list_name = args.get(3).cloned();
-
-                match content {
-                    Some(str) => Ok(Cmd::Add {
-                        content: str.clone(),
-                        list_name,
-                    }),
-                    None => Err(format!("Add command needs content")),
-                }
-            }
-            _ => Err(format!("Unknown command: {}", args[1])),
-        }
-    }
-
-    fn execute(&self) -> Result<(), Box<dyn Error>> {
-        match self {
-            Cmd::List { list_name } => list(list_name),
-            Cmd::Add { content, list_name } => add(content, list_name),
-            Cmd::Version => {
-                let env = env!("CARGO_PKG_VERSION");
-                let name = env!("CARGO_PKG_NAME");
-                println!("{} version {}", name, env);
-                Ok(())
-            }
-            Cmd::Help => help(),
-        }
-    }
-}
+use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let cmd = Cmd::new(&args)?;
-    cmd.execute()?;
+    if args.len() == 1 {
+        help()?;
+        return Ok(());
+    }
 
+    match args[1].as_str() {
+        "add" => {
+            if args.len() < 3 {
+                return Err("Error: 'marc add' requires at least one todo item.\nUsage: marc add [--tag TAG] <todo1> [todo2] ...".into());
+            }
+            let todos = &args[2..];
+
+            add(todos)?;
+        }
+        "log" => {
+            log()?;
+        }
+        "edit" => {
+            edit()?;
+        }
+        "done" => {
+        	done()?;
+        }
+        "--version" | "-v" => {
+            let env = env!("CARGO_PKG_VERSION");
+            let name = env!("CARGO_PKG_NAME");
+            println!("{} version {}", name, env);
+        }
+        "--help" | "-h" => {
+            help()?;
+        }
+        _ => {
+            return Err(format!(
+                "marc: '{}' is not a marc command. See 'marc --help'.",
+                args[1]
+            )
+            .into());
+        }
+    }
     Ok(())
+}
+
+pub struct Config {}
+impl Config {
+    pub fn get_path() -> Result<PathBuf, Box<dyn Error>> {
+        let home_dir = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("Home directory not set: {}", e),
+                )
+            })?;
+
+        let mut app_data_dir = PathBuf::from(&home_dir);
+        app_data_dir.push("marc");
+
+        const DB_FILE_NAME: &str = "marc.json";
+
+        let path = app_data_dir.join(DB_FILE_NAME);
+
+        if let Some(parent_dir) = path.parent() {
+            if !parent_dir.exists() {
+                fs::create_dir_all(parent_dir)?;
+                println!(
+                    "Created application data directory: {}",
+                    parent_dir.display()
+                );
+            }
+        }
+
+        Ok(path)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TodoItem {
+    desc: String,
+    is_completed: bool,
+    tag: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct TodoList {
+    items: Vec<TodoItem>,
+}
+
+impl TodoList {
+    fn new() -> Self {
+        TodoList { items: Vec::new() }
+    }
+
+    fn load_from_file() -> Result<Self, Box<dyn Error>> {
+        let path: PathBuf = Config::get_path()?;
+
+        if !path.exists() {
+            return Ok(TodoList::new());
+        }
+
+        let data = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read todo file: {}", e))?;
+
+        if data.trim().is_empty() {
+            return Ok(TodoList::new());
+        }
+
+        match serde_json::from_str(&data) {
+            Ok(list) => Ok(list),
+            Err(e) => {
+                Err(format!(
+                    "Failed to parse todo file ({}). The file may be corrupted. Error: {}",
+                    path.display(),
+                    e
+                ).into())
+            }
+        }
+    }
+
+    fn add_item(&mut self, desc: String, tag: Option<String>) {
+        let new_item = TodoItem {
+            desc: desc.clone(),
+            is_completed: false,
+            tag: Some(tag.unwrap_or("default".to_string())),
+        };
+        self.items.push(new_item);
+
+        let tag_display = self.items.last().unwrap().tag.as_ref()
+            .map(|t| format!(" #{}", t))
+            .unwrap_or_default();
+        println!("Added: '{}'{}", desc, tag_display);
+    }
+
+    fn save_to_file(&self) -> Result<(), Box<dyn Error>> {
+        let path = Config::get_path()?;
+
+        let serialized = serde_json::to_string_pretty(&self)
+            .map_err(|e| format!("Failed to serialize todo data: {}", e))?;
+        fs::write(&path, serialized)
+            .map_err(|e| format!("Failed to write to todo file ({}): {}", path.display(), e))?;
+        Ok(())
+    }
+
+    fn list_items(&self) {
+        if self.items.is_empty() {
+            println!("No todos'");
+            return;
+        }
+
+        for (i, item) in self.items.iter().enumerate() {
+            let (desc, status) = if item.is_completed {
+                (format!("\x1b[2m{}\x1b[0m", item.desc), "\x1b[32m ✓\x1b[0m")
+            } else {
+                (item.desc.clone(), "")
+            };
+
+            println!(
+                "\x1b[2m{}\x1b[0m {} {}{}",
+                i + 1,
+                desc,
+                item.tag
+                    .as_ref()
+                    .map_or(String::new(), |tag| format!("\x1b[36m#{}\x1b[0m", tag)),
+                status
+            );
+        }
+    }
 }
 
 /// Help command -- Displays all the commands, their usage and a short description
 fn help() -> Result<(), Box<dyn Error>> {
-    println!("Marc usage");
+    println!("marc - A simple todo list manager\n");
+    println!("USAGE:");
+    println!("    marc <COMMAND> [OPTIONS]\n");
+    println!("COMMANDS:");
+    println!("    add [--tag TAG] <todo>...   Add one or more todos");
+    println!("    log                         List all todos");
+    println!("    edit                        Interactive edit mode");
+    println!("    done                        Mark todos as complete");
+    println!("    --help, -h                  Show this help message");
+    println!("    --version, -v               Show version information\n");
     Ok(())
 }
 
-struct DB {}
-impl DB {
-    pub fn connect() -> Result<Connection, Box<dyn Error>> {
-        let db_path = format!("{}/marc/", env!("HOME"));
-        let conn = Connection::open(db_path)?;
+/// Add command -- Adds entries to a list
+fn add(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut todo_list = TodoList::load_from_file()?;
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS list (
-				id INTEGER PRIMARY KEY NOT NULL,
-				name TEXT NOT NULL UNIQUE
-			)",
-            (),
-        )?;
+    let (tag, todos_start_index) = match args.get(0) {
+        Some(str) if str == "--tag" || str == "-t" => {
+            match args.get(1) {
+            	Some(tag_value) if !tag_value.is_empty() => {
+             		(Some(tag_value), 2)
+             	}
+              	Some(_) => {
+               		return Err("Error: --tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>".into())
+               	}
+                None => {
+                	return Err("Error: --tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into())
+                }
+            }
+        }
+        _ => (None, 0),
+    };
 
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS note (
-				id INTEGER PRIMARY KEY NOT NULL,
-				content TEXT NOT NULL,
-				list_id INTEGER NOT NULL,
-				FOREIGN KEY (list_id) REFERENCES list(id)
-			)",
-            (),
-        )?;
-
-        conn.execute("INSERT OR IGNORE INTO list (name) VALUES ('default')", ())?;
-
-        Ok(conn)
+    if tag.is_some() {
+   		match args.get(todos_start_index) {
+     		None => { return Err("did not specify the todo content".into()) }
+       		_ => ()
+     	}
     }
+
+    // Add todos starting from the determined index
+    let todos_to_add = &args[todos_start_index..];
+    if todos_to_add.is_empty() {
+        return Err("Error: No todos provided after tag option.\nUsage: marc add --tag <tagname> <todo>".into());
+    }
+
+    for todo in todos_to_add {
+        if todo.trim().is_empty() {
+            return Err("Error: Todo items cannot be empty".into());
+        }
+        todo_list.add_item(todo.clone(), tag.cloned());
+    }
+
+    todo_list.save_to_file()?;
+    Ok(())
 }
 
-/// Add command -- Adds an entry to a list
-fn add(content: &String, list_name: &Option<String>) -> Result<(), Box<dyn Error>> {
-    let conn = DB::connect()?;
-    let list_name = list_name.as_deref().unwrap_or("default");
-
-    let added = conn.execute(
-	    "INSERT INTO note (content, list_id)
-	    VALUES (?1, (SELECT id FROM list WHERE name = ?2))",
-        (content, list_name),
-    )?;
-
-    match added {
-        0 => Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to insert note",
-        ))),
-        _ => Ok(()),
-    }
-}
-
-// List command -- Shows notes for a given list
-fn list(list_name: &Option<String>) -> Result<(), Box<dyn Error>> {
-    let conn = DB::connect()?;
-    let list_name = list_name.as_deref().unwrap_or("default");
-
-    let mut stmt = conn.prepare(
-        "SELECT content FROM note WHERE list_id = (SELECT id FROM list WHERE name = ?1)",
-    )?;
-
-    let note_iter = stmt.query_map([list_name], |row| Ok(row.get::<_, String>(0)?))?;
-
-    for note in note_iter {
-        println!("{}", note?);
-    }
+/// List command -- Shows notes for a given list
+fn log() -> Result<(), Box<dyn Error>> {
+    let todo_list = TodoList::load_from_file()?;
+    todo_list.list_items();
 
     Ok(())
+}
+
+fn done() -> Result<(), Box<dyn Error>> {
+	let todo_list = TodoList::load_from_file()?;
+
+	// TODO: Implement todo completion logic
+	todo_list.save_to_file()?;
+	Ok(())
+}
+
+/// Interactive edit command -- Opens editor to pick/drop todos
+fn edit() -> Result<(), Box<dyn Error>> {
+    let mut todo_list = TodoList::load_from_file()?;
+
+    if todo_list.items.is_empty() {
+        return Err("No todos to edit! Add some todos first with 'marc add <todo>'".into());
+    }
+
+    let mut temp_file = NamedTempFile::new()?;
+
+    for (i, item) in todo_list.items.iter().enumerate() {
+        writeln!(temp_file, "pick {} {}", i + 1, item.desc)?;
+    }
+
+    writeln!(temp_file, "")?;
+    writeln!(temp_file, "# Interactive todo editing")?;
+    writeln!(temp_file, "# Commands:")?;
+    writeln!(temp_file, "#   pick, p <todo> = keep the todo")?;
+    writeln!(temp_file, "#   drop, d <todo> = remove the todo")?;
+    writeln!(temp_file, "# Lines starting with # are ignored")?;
+
+    temp_file.flush()?;
+
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+
+    let status = Command::new(&editor).arg(temp_file.path()).status()?;
+
+    if !status.success() {
+        return Err(format!("Editor '{}' exited with an error. Make sure your EDITOR environment variable is set correctly.", editor).into());
+    }
+
+    let edited_content = fs::read_to_string(temp_file.path())?;
+
+    let new_items = parse_edit_commands(&edited_content, &todo_list.items)?;
+    todo_list.items = new_items;
+
+    todo_list.save_to_file()?;
+
+    println!("Todo list updated!");
+
+    Ok(())
+}
+
+/// Parse edit commands and return new list of todos
+fn parse_edit_commands(
+    content: &str,
+    original_items: &[TodoItem],
+) -> Result<Vec<TodoItem>, Box<dyn Error>> {
+    let mut new_items = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.splitn(3, ' ').collect();
+
+        if parts.len() < 2 {
+            continue; // Skip malformed lines
+        }
+
+        let command = parts[0];
+        let index_str = parts[1];
+
+        let index: usize = match index_str.parse::<usize>() {
+            Ok(i) if i > 0 && i <= original_items.len() => i - 1, // Convert to 0-based
+            _ => continue,                                        // Skip invalid indices
+        };
+
+        match command {
+            "pick" | "p" => {
+                if let Some(item) = original_items.get(index) {
+                    new_items.push(item.clone());
+                }
+            }
+            "drop" | "d" => {}
+            _ => {
+                if let Some(item) = original_items.get(index) {
+                    new_items.push(item.clone());
+                }
+            }
+        }
+    }
+
+    Ok(new_items)
 }

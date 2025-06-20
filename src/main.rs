@@ -1,5 +1,5 @@
 ///
-/// Marc is a CLI tool to annotate and retrieve notes from terminal using SQLite
+/// marc is a CLI tool for managing TODOs
 ///
 /// --------------------------------------
 ///
