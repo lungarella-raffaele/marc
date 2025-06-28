@@ -12,7 +12,7 @@ TODO:
 - [ ] `tag` handles tags;
     - [ ] option --create -c to create a new tag;
     - [ ] without any arguments it lists all available tags;
-- [x] 'edit' interactive editing of todos
+- [x] `edit` interactive editing of todos
     - [ ] should accept --tag option
     - [x] ability to drop todo
     - [ ] ability to complete a todo
