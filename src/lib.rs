@@ -93,7 +93,7 @@ impl Config {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct TodoItem {
-    id: String,
+    hash: String,
     desc: String,
     is_completed: bool,
     tag: Option<String>,
@@ -144,7 +144,7 @@ impl TodoList {
     fn add_item(&mut self, desc: String, tag: Option<String>) {
         let id = Self::generate_short_hash(&desc, &tag);
         let new_item = TodoItem {
-            id: id.clone(),
+            hash: id.clone(),
             desc: desc.clone(),
             is_completed: false,
             tag: Some(tag.unwrap_or("default".to_string())),
@@ -178,21 +178,23 @@ impl TodoList {
             return;
         }
 
+        println!("total {}", self.items.len());
+
         for item in self.items.iter() {
             let (desc, status) = if item.is_completed {
-                (format!("\x1b[2m{}\x1b[0m", item.desc), "\x1b[32m ✓\x1b[0m")
+            	(item.desc.clone(), 1)
             } else {
-                (item.desc.clone(), "")
+                (item.desc.clone(), 0)
             };
 
             println!(
-                "\x1b[2m[{}]\x1b[0m {} {}{}",
-                item.id,
-                desc,
+                "{} {} {} {}",
+                status,
+                item.hash,
                 item.tag
                     .as_ref()
                     .map_or(String::new(), |tag| format!("\x1b[36m#{}\x1b[0m", tag)),
-                status
+                desc,
             );
         }
     }
@@ -218,7 +220,7 @@ impl TodoList {
         let matching_items: Vec<usize> = self.items
             .iter()
             .enumerate()
-            .filter(|(_, item)| item.id.starts_with(hash))
+            .filter(|(_, item)| item.hash.starts_with(hash))
             .map(|(i, _)| i)
             .collect();
 
@@ -236,7 +238,7 @@ impl TodoList {
             _ => {
                 let matches: Vec<(String, String)> = matching_items
                     .iter()
-                    .map(|&i| (self.items[i].id.clone(), self.items[i].desc.clone()))
+                    .map(|&i| (self.items[i].hash.clone(), self.items[i].desc.clone()))
                     .collect();
                 Err(MarkDoneError::MultipleMatches(hash.to_string(), matches))
             }
