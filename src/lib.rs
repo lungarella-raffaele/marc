@@ -1,11 +1,11 @@
+use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::error::Error;
 use std::fs::{self};
+use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -19,12 +19,11 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
     match args[1].as_str() {
         "add" => {
             if args.len() < 3 {
-            	// TODO Instead of showing error prompt user to add TODOS
+                // TODO Instead of showing error prompt user to add TODOS
                 return Err("error: 'add' command requires at least one item".into());
             }
-            let todos = &args[2..];
 
-            add(todos)?;
+            add(&args[2..])?;
         }
         "log" => {
             log()?;
@@ -174,15 +173,15 @@ impl TodoList {
 
     fn list_items(&self) {
         if self.items.is_empty() {
-            println!("No todos'");
+            println!("No entries");
             return;
         }
 
-        println!("total {}", self.items.len());
+        println!("\x1b[1;31m total {}", self.items.len());
 
         for item in self.items.iter() {
             let (desc, status) = if item.is_completed {
-            	(item.desc.clone(), 1)
+                (item.desc.clone(), 1)
             } else {
                 (item.desc.clone(), 0)
             };
@@ -217,7 +216,8 @@ impl TodoList {
     }
 
     fn mark_done(&mut self, hash: &str) -> Result<usize, MarkDoneError> {
-        let matching_items: Vec<usize> = self.items
+        let matching_items: Vec<usize> = self
+            .items
             .iter()
             .enumerate()
             .filter(|(_, item)| item.hash.starts_with(hash))
@@ -225,11 +225,16 @@ impl TodoList {
             .collect();
 
         match matching_items.len() {
-            0 => Err(MarkDoneError::NotFound(format!("warning: no todo found with hash' {}'", hash))),
+            0 => Err(MarkDoneError::NotFound(format!(
+                "warning: no todo found with hash' {}'",
+                hash
+            ))),
             1 => {
                 let index = matching_items[0];
                 if self.items[index].is_completed {
-                    Err(MarkDoneError::AlreadyCompleted("warning: todo is already completed".to_string()))
+                    Err(MarkDoneError::AlreadyCompleted(
+                        "warning: todo is already completed".to_string(),
+                    ))
                 } else {
                     self.items[index].is_completed = true;
                     Ok(1)
@@ -261,25 +266,31 @@ fn help() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+// TODO the getSwitch returns true if the switch is present inside the args false otherwise
+// fn getSwitch()
+
+// The get flag methods finds a certain flag inside the args and returns the value the flag identifies.
+// e.g. if the flag is -t, the command -t my_tag would return my_tag
+fn get_flag<'a>(aliases: &'a [&'a str], args: &'a [String]) -> Option<&'a String> {
+    args.iter()
+        .position(|entry| aliases.contains(&entry.as_str()))
+        .and_then(|pos| args.get(pos + 1))
+}
+
 /// Add command -- Adds entries to a list
 fn add(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut todo_list = TodoList::load_from_file()?;
 
-    let (tag, todos_start_index) = match args.get(0) {
-        Some(str) if str == "--tag" || str == "-t" => {
-            match args.get(1) {
-            	Some(tag_value) if !tag_value.is_empty() => {
-             		(Some(tag_value), 2)
-             	}
-              	Some(_) => {
-               		return Err("error: --tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>".into())
-               	}
-                None => {
-                	return Err("error: --tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into())
-                }
-            }
+    let (tag, todos_start_index) = match get_flag(&["-t", "--tag"], args) {
+       	Some(tag_value) if !tag_value.is_empty() => {
+            (Some(tag_value), 2)
+       	}
+       	Some(_) => {
+				return Err("error: --tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>".into())
+       	}
+        None => {
+            return Err("error: --tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into())
         }
-        _ => (None, 0),
     };
 
     if tag.is_some() {
@@ -435,7 +446,10 @@ fn done(hash_prefixes: &[String]) -> Result<(), Box<dyn Error>> {
                 errors.push(msg);
             }
             Err(MarkDoneError::MultipleMatches(matched_prefix, matches)) => {
-                println!("Multiple todos found matching '{}', please be more specific:", matched_prefix);
+                println!(
+                    "Multiple todos found matching '{}', please be more specific:",
+                    matched_prefix
+                );
                 for (hash, desc) in matches {
                     println!("[{}] {}", hash, desc);
                 }

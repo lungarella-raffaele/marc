@@ -7,6 +7,7 @@ Marc is a CLI tool to manage TODOs.
 ### TODO
 
 - [ ] only use prompts or interactive elements if stdin is an interactive terminal (a TTY)
+- [ ] only print escaped characters if the output is not being redirected
 - [ ] if --no-input is passed, don’t prompt or do anything interactive
 - [x] `add` adds a todo
     - [x] should accept a `--tag` flag
@@ -26,6 +27,7 @@ Marc is a CLI tool to manage TODOs.
     - [x] ability to drop todo
     - [ ] ability to complete a todo
     - [ ] ability to edit a todo, (content and tag)
+- [x] `done` command, marks an entry as completed
 - [ ] consider writing manual for subcommands, e.g.
 
 ```
