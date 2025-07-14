@@ -20,7 +20,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         "add" => {
             if args.len() < 3 {
                 // TODO Instead of showing error prompt user to add TODOS
-                return Err("error: 'add' command requires at least one item".into());
+                return Err("'add' command requires at least one entry".into());
             }
 
             add(&args[2..])?;
@@ -31,12 +31,18 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         "edit" => {
             edit()?;
         }
+        "rm" => {
+            let hashes: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
+            rm(&hashes)?
+        }
         "done" => {
             if args.len() < 3 {
-                return Err("error: 'done' command requires at least one todo ID".into());
+                return Err(
+                    "'done' command requires at least one hash to complete an entry".into(),
+                );
             }
-            let hash_prefixes = &args[2..];
-            done(hash_prefixes)?;
+            let hashes = &args[2..];
+            done(hashes)?;
         }
         "--version" | "-v" => {
             let env = env!("CARGO_PKG_VERSION");
@@ -47,11 +53,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
             help()?;
         }
         _ => {
-            return Err(format!(
-                "marc: '{}' is not a marc command. See 'marc --help'.",
-                args[1]
-            )
-            .into());
+            return Err(format!("'{}' is not a marc command. See 'marc --help'.", args[1]).into());
         }
     }
     Ok(())
@@ -65,7 +67,7 @@ impl Config {
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("Home directory not set: {}", e),
+                    format!("home directory not set: {}", e),
                 )
             })?;
 
@@ -79,10 +81,6 @@ impl Config {
         if let Some(parent_dir) = path.parent() {
             if !parent_dir.exists() {
                 fs::create_dir_all(parent_dir)?;
-                println!(
-                    "Created application data directory: {}",
-                    parent_dir.display()
-                );
             }
         }
 
@@ -122,8 +120,8 @@ impl TodoList {
             return Ok(TodoList::new());
         }
 
-        let data =
-            fs::read_to_string(&path).map_err(|e| format!("Failed to read todo file: {}", e))?;
+        let data = fs::read_to_string(&path)
+            .map_err(|e| format!("error: failed to read todo file: {}", e))?;
 
         if data.trim().is_empty() {
             return Ok(TodoList::new());
@@ -132,7 +130,7 @@ impl TodoList {
         match serde_json::from_str(&data) {
             Ok(list) => Ok(list),
             Err(e) => Err(format!(
-                "Failed to parse todo file ({}). The file may be corrupted. Error: {}",
+                "error: failed to parse todo file ({}). Error: {}",
                 path.display(),
                 e
             )
@@ -161,13 +159,38 @@ impl TodoList {
         println!("Added: '{}'{} [{}]", desc, tag_display, id);
     }
 
+    fn rm_item(&mut self, hash: &str) -> Option<TodoItem> {
+        let matching_items: Vec<usize> = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.hash.starts_with(hash))
+            .map(|(i, _)| i)
+            .collect();
+
+        match matching_items.len() {
+            0 => None,
+            1 => {
+                let index = matching_items[0];
+
+                Some(self.items.remove(index))
+            }
+            _ => None,
+        }
+    }
+
     fn save_to_file(&self) -> Result<(), Box<dyn Error>> {
         let path = Config::get_path()?;
 
         let serialized = serde_json::to_string_pretty(&self)
-            .map_err(|e| format!("Failed to serialize todo data: {}", e))?;
-        fs::write(&path, serialized)
-            .map_err(|e| format!("Failed to write to todo file ({}): {}", path.display(), e))?;
+            .map_err(|e| format!("error: failed to serialize todo data: {}", e))?;
+        fs::write(&path, serialized).map_err(|e| {
+            format!(
+                "error: failed to write to todo file ({}): {}",
+                path.display(),
+                e
+            )
+        })?;
         Ok(())
     }
 
@@ -177,7 +200,7 @@ impl TodoList {
             return;
         }
 
-        println!("\x1b[1;31m total {}", self.items.len());
+        println!("\x1b[1;31m total {}\x1b[0m", self.items.len());
 
         for item in self.items.iter() {
             let (desc, status) = if item.is_completed {
@@ -261,16 +284,14 @@ fn help() -> Result<(), Box<dyn Error>> {
     println!("    log                         List all todos");
     println!("    edit                        Interactive edit mode");
     println!("    done <hash>...              Mark todos as complete by hash ID");
+    println!("    rm <hash>...                Deletes todos by hash ID");
     println!("    --help, -h                  Show this help message");
     println!("    --version, -v               Show version information\n");
     Ok(())
 }
 
-// TODO the getSwitch returns true if the switch is present inside the args false otherwise
-// fn getSwitch()
-
-// The get flag methods finds a certain flag inside the args and returns the value the flag identifies.
-// e.g. if the flag is -t, the command -t my_tag would return my_tag
+/// The get flag methods finds a certain flag inside the args and returns the value the flag identifies.
+/// e.g. if the flag is -t, the command -t my_tag would return my_tag
 fn get_flag<'a>(aliases: &'a [&'a str], args: &'a [String]) -> Option<&'a String> {
     args.iter()
         .position(|entry| aliases.contains(&entry.as_str()))
@@ -281,37 +302,35 @@ fn get_flag<'a>(aliases: &'a [&'a str], args: &'a [String]) -> Option<&'a String
 fn add(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut todo_list = TodoList::load_from_file()?;
 
-    let (tag, todos_start_index) = match get_flag(&["-t", "--tag"], args) {
-       	Some(tag_value) if !tag_value.is_empty() => {
-            (Some(tag_value), 2)
-       	}
-       	Some(_) => {
-				return Err("error: --tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>".into())
-       	}
-        None => {
-            return Err("error: --tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into())
-        }
-    };
+    let (tag, todos_start_index) =
+        match get_flag(&["-t", "--tag"], args) {
+            Some(tag_value) if !tag_value.is_empty() => (Some(tag_value), 2),
+            Some(_) => return Err(
+                "--tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>"
+                    .into(),
+            ),
+            None => {
+                return Err(
+                    "--tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into(),
+                );
+            }
+        };
 
-    if tag.is_some() {
-        match args.get(todos_start_index) {
-            None => return Err("did not specify the todo content".into()),
-            _ => (),
-        }
+    if tag.is_some() && args.get(todos_start_index) == None {
+        return Err("did not specify the todo content".into());
     }
 
     // Add todos starting from the determined index
     let todos_to_add = &args[todos_start_index..];
     if todos_to_add.is_empty() {
         return Err(
-            "error: No todos provided after tag option.\nUsage: marc add --tag <tagname> <todo>"
-                .into(),
+            "No todos provided after tag option.\nUsage: marc add --tag <tagname> <todo>".into(),
         );
     }
 
     for todo in todos_to_add {
         if todo.trim().is_empty() {
-            return Err("error: Todo items cannot be empty".into());
+            return Err("Todo items cannot be empty".into());
         }
         todo_list.add_item(todo.clone(), tag.cloned());
     }
@@ -325,6 +344,28 @@ fn log() -> Result<(), Box<dyn Error>> {
     let todo_list = TodoList::load_from_file()?;
     todo_list.list_items();
 
+    Ok(())
+}
+
+fn rm(hash: &[&str]) -> Result<(), Box<dyn Error>> {
+    if hash.is_empty() {
+        return Err("rm command required an hash".into());
+    }
+    let mut todo_list = TodoList::load_from_file()?;
+
+    if todo_list.items.is_empty() {
+        return Err("No todos to remove".into());
+    }
+
+    for prefix in hash {
+        if prefix.trim().is_empty() {
+            continue;
+        };
+
+        todo_list.rm_item(prefix);
+    }
+
+    todo_list.save_to_file()?;
     Ok(())
 }
 
@@ -342,8 +383,7 @@ fn edit() -> Result<(), Box<dyn Error>> {
         writeln!(temp_file, "pick {} {}", i + 1, item.desc)?;
     }
 
-    writeln!(temp_file, "")?;
-    writeln!(temp_file, "# Interactive todo editing")?;
+    writeln!(temp_file, "\n# Interactive todo editing")?;
     writeln!(temp_file, "# Commands:")?;
     writeln!(temp_file, "#   pick, p <todo> = keep the todo")?;
     writeln!(temp_file, "#   drop, d <todo> = remove the todo")?;
@@ -418,7 +458,7 @@ fn parse_edit_commands(
 }
 
 /// Done command -- Mark todos as completed using hash prefixes
-fn done(hash_prefixes: &[String]) -> Result<(), Box<dyn Error>> {
+fn done(hash: &[String]) -> Result<(), Box<dyn Error>> {
     let mut todo_list = TodoList::load_from_file()?;
 
     if todo_list.items.is_empty() {
@@ -428,7 +468,7 @@ fn done(hash_prefixes: &[String]) -> Result<(), Box<dyn Error>> {
     let mut completed_count = 0;
     let mut errors = Vec::new();
 
-    for prefix in hash_prefixes {
+    for prefix in hash {
         if prefix.trim().is_empty() {
             errors.push("Empty hash prefix provided".to_string());
             continue;
@@ -463,7 +503,7 @@ fn done(hash_prefixes: &[String]) -> Result<(), Box<dyn Error>> {
 
     if !errors.is_empty() {
         for error in &errors {
-            eprintln!("Error: {}", error);
+            eprintln!("{}", error);
         }
         if completed_count == 0 {
             return Err("No todos were marked as done".into());
@@ -475,4 +515,14 @@ fn done(hash_prefixes: &[String]) -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    pub fn add_cmd() {
+        let result = 2 + 2;
+        assert_eq!(result, 4);
+    }
 }
