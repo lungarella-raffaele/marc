@@ -1,61 +1,29 @@
+use crate::cli::CommandLine;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::env;
+use std::env::{self};
 use std::error::Error;
 use std::fs::{self};
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::Command;
-
-use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
+mod cli;
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    if args.len() == 1 {
-        help()?;
-        return Ok(());
-    }
+    let cmd_line = CommandLine::new(args)?;
 
-    match args[1].as_str() {
-        "add" => {
-            if args.len() < 3 {
-                // TODO Instead of showing error prompt user to add TODOS
-                return Err("'add' command requires at least one entry".into());
-            }
+    match cmd_line.subcommand {
+        cli::Subcommand::Add => add(cmd_line.args)?,
+        cli::Subcommand::Log => log()?,
+        cli::Subcommand::Done => done(cmd_line.args)?,
+        cli::Subcommand::Edit => edit()?,
+        cli::Subcommand::Remove => rm(cmd_line.args)?,
+        cli::Subcommand::Help => help()?,
+        cli::Subcommand::Version => version(),
+    };
 
-            add(&args[2..])?;
-        }
-        "log" => {
-            log()?;
-        }
-        "edit" => {
-            edit()?;
-        }
-        "rm" => {
-            let hashes: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
-            rm(&hashes)?
-        }
-        "done" => {
-            if args.len() < 3 {
-                return Err(
-                    "'done' command requires at least one hash to complete an entry".into(),
-                );
-            }
-            let hashes = &args[2..];
-            done(hashes)?;
-        }
-        "--version" | "-v" => {
-            let env = env!("CARGO_PKG_VERSION");
-            let name = env!("CARGO_PKG_NAME");
-            println!("{} version {}", name, env);
-        }
-        "--help" | "-h" => {
-            help()?;
-        }
-        _ => {
-            return Err(format!("'{}' is not a marc command. See 'marc --help'.", args[1]).into());
-        }
-    }
     Ok(())
 }
 
@@ -101,13 +69,6 @@ struct TodoList {
     items: Vec<TodoItem>,
 }
 
-#[derive(Debug)]
-enum MarkDoneError {
-    NotFound(String),
-    AlreadyCompleted(String),
-    MultipleMatches(String, Vec<(String, String)>), // prefix, vec of (id, desc)
-}
-
 impl TodoList {
     fn new() -> Self {
         TodoList { items: Vec::new() }
@@ -138,13 +99,13 @@ impl TodoList {
         }
     }
 
-    fn add_item(&mut self, desc: String, tag: Option<String>) {
+    fn add_item(&mut self, desc: String, tag: &Option<String>) {
         let id = Self::generate_short_hash(&desc, &tag);
         let new_item = TodoItem {
             hash: id.clone(),
             desc: desc.clone(),
             is_completed: false,
-            tag: Some(tag.unwrap_or("default".to_string())),
+            tag: Some(tag.clone().unwrap_or("default".to_string())),
         };
         self.items.push(new_item);
 
@@ -290,49 +251,36 @@ fn help() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// The get flag methods finds a certain flag inside the args and returns the value the flag identifies.
-/// e.g. if the flag is -t, the command -t my_tag would return my_tag
-fn get_flag<'a>(aliases: &'a [&'a str], args: &'a [String]) -> Option<&'a String> {
-    args.iter()
-        .position(|entry| aliases.contains(&entry.as_str()))
-        .and_then(|pos| args.get(pos + 1))
-}
-
 /// Add command -- Adds entries to a list
-fn add(args: &[String]) -> Result<(), Box<dyn Error>> {
+fn add(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
+    if !args
+        .iter()
+        .find(|entry| matches!(entry, cli::Arg::Value { .. }))
+        .is_some()
+    {
+        return Err("'add' command requires at least one entry".into());
+    }
+
     let mut todo_list = TodoList::load_from_file()?;
 
-    let (tag, todos_start_index) =
-        match get_flag(&["-t", "--tag"], args) {
-            Some(tag_value) if !tag_value.is_empty() => (Some(tag_value), 2),
-            Some(_) => return Err(
-                "--tag option requires a non-empty value.\nUsage: marc add --tag <tagname> <todo>"
-                    .into(),
-            ),
-            None => {
-                return Err(
-                    "--tag option requires a value.\nUsage: marc add --tag <tagname> <todo>".into(),
-                );
-            }
-        };
+    let tag: Option<String> = args.iter().find_map(|entry| match entry {
+        cli::Arg::Option { name, value } if name == "tag" => Some(value.clone()),
+        _ => None,
+    });
 
-    if tag.is_some() && args.get(todos_start_index) == None {
-        return Err("did not specify the todo content".into());
-    }
-
-    // Add todos starting from the determined index
-    let todos_to_add = &args[todos_start_index..];
-    if todos_to_add.is_empty() {
-        return Err(
-            "No todos provided after tag option.\nUsage: marc add --tag <tagname> <todo>".into(),
-        );
-    }
+    let todos_to_add: Vec<String> = args
+        .iter()
+        .filter_map(|arg| match arg {
+            cli::Arg::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect();
 
     for todo in todos_to_add {
         if todo.trim().is_empty() {
             return Err("Todo items cannot be empty".into());
         }
-        todo_list.add_item(todo.clone(), tag.cloned());
+        todo_list.add_item(todo.clone(), &tag);
     }
 
     todo_list.save_to_file()?;
@@ -347,22 +295,31 @@ fn log() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn rm(hash: &[&str]) -> Result<(), Box<dyn Error>> {
-    if hash.is_empty() {
-        return Err("rm command required an hash".into());
+fn rm(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
+    let hashes: Vec<String> = args
+        .iter()
+        .filter_map(|arg| match arg {
+            cli::Arg::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect();
+
+    if hashes.is_empty() {
+        return Err("remove: should at least specify one hash".into());
     }
+
     let mut todo_list = TodoList::load_from_file()?;
 
     if todo_list.items.is_empty() {
         return Err("No todos to remove".into());
     }
 
-    for prefix in hash {
+    for prefix in hashes {
         if prefix.trim().is_empty() {
             continue;
         };
 
-        todo_list.rm_item(prefix);
+        todo_list.rm_item(&prefix);
     }
 
     todo_list.save_to_file()?;
@@ -457,24 +414,39 @@ fn parse_edit_commands(
     Ok(new_items)
 }
 
+#[derive(Debug)]
+enum MarkDoneError {
+    NotFound(String),
+    AlreadyCompleted(String),
+    MultipleMatches(String, Vec<(String, String)>), // prefix, vec of (id, desc)
+}
+
 /// Done command -- Mark todos as completed using hash prefixes
-fn done(hash: &[String]) -> Result<(), Box<dyn Error>> {
+fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     let mut todo_list = TodoList::load_from_file()?;
 
-    if todo_list.items.is_empty() {
-        return Err("No todos available to mark as done".into());
+    let hashes: Vec<String> = args
+        .iter()
+        .filter_map(|arg| match arg {
+            cli::Arg::Value(value) => Some(value.clone()),
+            _ => None,
+        })
+        .collect();
+
+    if hashes.is_empty() {
+        return Err("done: should at least specify one hash".into());
     }
 
     let mut completed_count = 0;
     let mut errors = Vec::new();
 
-    for prefix in hash {
+    for prefix in hashes {
         if prefix.trim().is_empty() {
             errors.push("Empty hash prefix provided".to_string());
             continue;
         }
 
-        match todo_list.mark_done(prefix) {
+        match todo_list.mark_done(&prefix) {
             Ok(_) => {
                 completed_count += 1;
                 println!("Marked todo [{}] as done ✓", prefix);
@@ -517,12 +489,8 @@ fn done(hash: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-#[cfg(test)]
-mod test {
-
-    #[test]
-    pub fn add_cmd() {
-        let result = 2 + 2;
-        assert_eq!(result, 4);
-    }
+fn version() {
+    let env = env!("CARGO_PKG_VERSION");
+    let name = env!("CARGO_PKG_NAME");
+    println!("{} version {}", name, env);
 }
