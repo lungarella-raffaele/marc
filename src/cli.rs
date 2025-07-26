@@ -61,7 +61,18 @@ define_args! {
             kind: Option,
         },
     },
-    Log: {},
+    Log: {
+        tag: {
+             short: "t",
+             long: "tag",
+             kind: Option,
+         },
+         completed: {
+             short: "c",
+             long: "completed",
+             kind: Flag,
+         }
+    },
     Remove: {},
     Edit: {},
     Help: {},
@@ -92,6 +103,19 @@ pub enum Arg {
     Option { name: String, value: String }, // The option can accept a value
     Flag(String),                           // Just a switch
     Value(String),                          // Argument containing a value
+}
+
+impl Arg {
+    pub fn get_option(args: &Vec<Arg>, option_name: &String) -> Option<String> {
+        args.iter().find_map(|entry| match entry {
+            Arg::Option { name, value } if name == option_name => Some(value.clone()),
+            _ => None,
+        })
+    }
+    pub fn get_flag(args: &Vec<Arg>, flag_name: &String) -> bool {
+        args.iter()
+            .any(|entry| matches!(entry, Arg::Flag(str) if str == flag_name))
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -150,6 +174,7 @@ impl CommandLine {
                 match flags.iter().find(|flag| flag.long == entry) {
                     Some(str) => {
                         args.push(Arg::Flag(str.name.to_string()));
+                        i += 1;
                         continue;
                     }
 
@@ -183,6 +208,7 @@ impl CommandLine {
                 match flags.iter().find(|flag| flag.short == entry) {
                     Some(str) => {
                         args.push(Arg::Flag(str.name.to_string()));
+                        i += 1;
                         continue;
                     }
                     None => (),

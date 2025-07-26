@@ -16,7 +16,7 @@ pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
 
     match cmd_line.subcommand {
         cli::Subcommand::Add => add(cmd_line.args)?,
-        cli::Subcommand::Log => log()?,
+        cli::Subcommand::Log => log(cmd_line.args)?,
         cli::Subcommand::Done => done(cmd_line.args)?,
         cli::Subcommand::Edit => edit()?,
         cli::Subcommand::Remove => rm(cmd_line.args)?,
@@ -155,15 +155,29 @@ impl TodoList {
         Ok(())
     }
 
-    fn list_items(&self) {
-        if self.items.is_empty() {
+    fn list_items(&self, tag: Option<String>, completed: bool) {
+        let mut entries = match tag {
+            Some(_) => self
+                .items
+                .iter()
+                .filter(|p| p.tag == tag)
+                .map(|p| p.clone())
+                .collect(),
+            None => self.items.clone(),
+        };
+
+        if completed {
+            entries.retain(|e| e.is_completed);
+        }
+
+        if entries.is_empty() {
             println!("No entries");
             return;
         }
 
-        println!("\x1b[1;31m total {}\x1b[0m", self.items.len());
+        println!("\x1b[1;31m total {}\x1b[0m", entries.len());
 
-        for item in self.items.iter() {
+        for item in entries.iter() {
             let (desc, status) = if item.is_completed {
                 (item.desc.clone(), 1)
             } else {
@@ -288,9 +302,13 @@ fn add(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
 }
 
 /// List command -- Shows notes for a given list
-fn log() -> Result<(), Box<dyn Error>> {
+fn log(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     let todo_list = TodoList::load_from_file()?;
-    todo_list.list_items();
+
+    let tag: Option<String> = cli::Arg::get_option(&args, &"tag".to_string());
+    let only_completed: bool = cli::Arg::get_flag(&args, &"completed".to_string());
+
+    todo_list.list_items(tag, only_completed);
 
     Ok(())
 }

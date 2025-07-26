@@ -4,6 +4,12 @@ Marc is a CLI tool to manage TODOs.
 
 > Thanks to [clig](https://clig.dev/) for the wonferful guidelines on how to write a command-line program.
 
+## Build
+
+```bash
+cargo build --release
+```
+
 ### TODO
 
 - [ ] only use prompts or interactive elements if stdin is an interactive terminal (a TTY)
