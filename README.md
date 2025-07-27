@@ -35,9 +35,7 @@ cargo build --release
   - [ ] ability to edit a todo, (content and tag)
 - [x] `done` command, marks an entry as completed
 - [x] `rm` command, removes an entry
-  - [ ] should accept `--all-done` to remove all done items
-  - [ ] `--all`, maybe this flag needs an user input
-  - [ ] `--all-undone`, to understand if it makes sense
+  - [x] should accept `--done` to remove all done items
 - [ ] consider writing manual for subcommands, e.g.
 
 ```

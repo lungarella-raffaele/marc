@@ -78,7 +78,13 @@ define_args! {
              kind: Flag,
          }
     },
-    Remove: {},
+    Remove: {
+        done: {
+            short: 'd',
+            long: "done",
+            kind: Flag,
+        },
+    },
     Edit: {},
     Help: {},
     Done: {},

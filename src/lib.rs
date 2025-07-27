@@ -314,6 +314,8 @@ fn log(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
 }
 
 fn rm(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
+    let only_completed: bool = cli::Arg::get_flag(&args, &"done".to_string());
+
     let hashes: Vec<String> = args
         .iter()
         .filter_map(|arg| match arg {
@@ -322,7 +324,7 @@ fn rm(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
         })
         .collect();
 
-    if hashes.is_empty() {
+    if hashes.is_empty() && !only_completed {
         return Err("remove: should at least specify one hash".into());
     }
 
@@ -330,6 +332,12 @@ fn rm(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
 
     if todo_list.items.is_empty() {
         return Err("No todos to remove".into());
+    }
+
+    if only_completed {
+        todo_list.items.retain(|t| !t.is_completed);
+        todo_list.save_to_file()?;
+        return Ok(());
     }
 
     for prefix in hashes {
