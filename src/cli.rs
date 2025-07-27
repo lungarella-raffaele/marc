@@ -28,7 +28,7 @@ macro_rules! define_args {
         #[derive(Debug, Clone)]
         struct ArgSpec {
             name: &'static str,
-            short: &'static str,
+            short: char,
             long: &'static str,
             kind: ArgKind,
         }
@@ -56,20 +56,25 @@ macro_rules! define_args {
 define_args! {
     Add: {
         tag: {
-            short: "t",
+            short: 't',
             long: "tag",
             kind: Option,
         },
     },
     Log: {
         tag: {
-             short: "t",
+             short: 't',
              long: "tag",
              kind: Option,
          },
-         completed: {
-             short: "c",
-             long: "completed",
+         done: {
+             short: 'd',
+             long: "done",
+             kind: Flag,
+         },
+         undone: {
+             short: 'u',
+             long: "undone",
              kind: Flag,
          }
     },
@@ -124,6 +129,12 @@ pub struct CommandLine {
     pub args: Vec<Arg>,
 }
 
+#[derive(Debug)]
+enum ParseError {
+    UnknownArg(String),
+    Missing(String),
+}
+
 impl CommandLine {
     pub fn new(tokens: Vec<String>) -> Result<CommandLine, Box<dyn std::error::Error>> {
         if tokens.len() == 1 {
@@ -142,7 +153,15 @@ impl CommandLine {
         let rem_args = tokens[2..].to_vec();
         let arg_spec = get_arg_specs_for(subcommand);
 
-        let args = Self::parse_args(rem_args, arg_spec).expect("Ahioo");
+        let args = match Self::parse_args(rem_args, arg_spec) {
+            Ok(args) => args,
+            Err(ParseError::Missing(arg)) => {
+                return Err(format!("switch \"{}\" requires a value", arg).into());
+            }
+            Err(ParseError::UnknownArg(arg)) => {
+                return Err(format!("unknown argument \"{}\" for {:#?}", arg, subcommand).into());
+            }
+        };
 
         Ok(CommandLine { subcommand, args })
     }
@@ -151,7 +170,7 @@ impl CommandLine {
     fn parse_args(
         tokens: Vec<String>,
         arg_spec: &'static [ArgSpec],
-    ) -> Result<Vec<Arg>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<Arg>, ParseError> {
         let flags: Vec<&ArgSpec> = arg_spec
             .iter()
             .filter(|f| f.kind == ArgKind::Flag)
@@ -162,77 +181,69 @@ impl CommandLine {
             .collect();
 
         let mut args: Vec<Arg> = vec![];
-
         let mut i = 0;
+
         while i < tokens.len() {
-            let t = &tokens[i];
-            // long format
-            if t.starts_with("--") {
-                let entry = &t[2..];
+            let token = &tokens[i];
+            if token.starts_with("--") {
+                // long format
+                let arg_name = &token[2..];
 
-                // flags
-                match flags.iter().find(|flag| flag.long == entry) {
+                match flags.iter().find(|flag| flag.long == arg_name) {
                     Some(str) => {
                         args.push(Arg::Flag(str.name.to_string()));
-                        i += 1;
-                        continue;
                     }
+                    None => match options.iter().find(|opt| opt.long == arg_name) {
+                        Some(str) => {
+                            let next_token = tokens.get(i + 1);
 
-                    None => (),
-                }
-
-                // options
-                match options.iter().find(|opt| opt.long == entry) {
-                    Some(str) => {
-                        let next_token = tokens.get(i + 1);
-
-                        match next_token {
-                            Some(next) => {
-                                i += 1;
-                                args.push(Arg::Option {
-                                    name: str.name.to_string(),
-                                    value: next.to_string(),
-                                });
+                            match next_token {
+                                Some(next) => {
+                                    i += 1;
+                                    args.push(Arg::Option {
+                                        name: str.name.to_string(),
+                                        value: next.to_string(),
+                                    });
+                                }
+                                None => return Err(ParseError::Missing(arg_name.to_string())),
                             }
-                            None => (), // Handle error "option should have a value"
                         }
-                    }
-                    None => (),
+                        None => return Err(ParseError::UnknownArg(arg_name.to_string())),
+                    },
                 }
-            } else if t.starts_with("-") {
-                // TODO: Implement concatened feature
+            } else if token.starts_with("-") {
                 // short format
-                let entry = &t[1..];
+                // TODO: Implement concatened feature
+                let arg = &token[1..];
 
-                // flags
-                match flags.iter().find(|flag| flag.short == entry) {
-                    Some(str) => {
-                        args.push(Arg::Flag(str.name.to_string()));
-                        i += 1;
-                        continue;
-                    }
-                    None => (),
-                }
-
-                match options.iter().find(|opt| opt.short == entry) {
-                    Some(str) => {
-                        let next_token = tokens.get(i + 1);
-
-                        match next_token {
-                            Some(next) => {
-                                i += 1;
-                                args.push(Arg::Option {
-                                    name: str.name.to_string(),
-                                    value: next.to_string(),
-                                });
-                            }
-                            None => (), // Handle error "option should have a value"
+                for a in arg.chars() {
+                    // flags
+                    match flags.iter().find(|flag| flag.short == a) {
+                        Some(str) => {
+                            args.push(Arg::Flag(str.name.to_string()));
                         }
+                        None => match options.iter().find(|opt| opt.short == a) {
+                            Some(str) => {
+                                let next_token = tokens.get(i + 1);
+
+                                match next_token {
+                                    Some(next) => {
+                                        i += 1;
+                                        args.push(Arg::Option {
+                                            name: str.name.to_string(),
+                                            value: next.to_string(),
+                                        });
+                                    }
+                                    None => return Err(ParseError::Missing(a.to_string())),
+                                }
+                            }
+                            None => return Err(ParseError::UnknownArg(a.to_string())),
+                        },
                     }
-                    None => (),
                 }
             } else {
-                args.push(Arg::Value(t.to_string()));
+                // simple values
+                args.push(Arg::Value(token.to_string()));
             }
             i += 1;
         }
@@ -288,5 +299,47 @@ mod tests {
         };
 
         assert_eq!(cmd_line.unwrap(), crt_cmd_line);
+    }
+
+    #[test]
+    fn get_args_concatenated() {
+        let input = vec!["marc", "log", "-ud"]
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+
+        let cmd_line = CommandLine::new(input);
+
+        let crt_cmd_line = CommandLine {
+            subcommand: Subcommand::Log,
+            args: vec![
+                Arg::Flag("undone".to_string()),
+                Arg::Flag("done".to_string()),
+            ],
+        };
+
+        assert_eq!(cmd_line.unwrap(), crt_cmd_line);
+    }
+
+    #[test]
+    fn err_on_unknow_args() {
+        let input = vec!["marc", "log", "--pippo"]
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+
+        let cmd_line = CommandLine::new(input);
+        assert!(cmd_line.is_err());
+    }
+
+    #[test]
+    fn err_on_missing_values() {
+        let input = vec!["marc", "add", "--tag"]
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+
+        let cmd_line = CommandLine::new(input);
+        assert!(cmd_line.is_err());
     }
 }

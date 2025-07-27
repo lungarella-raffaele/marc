@@ -306,7 +306,7 @@ fn log(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     let todo_list = TodoList::load_from_file()?;
 
     let tag: Option<String> = cli::Arg::get_option(&args, &"tag".to_string());
-    let only_completed: bool = cli::Arg::get_flag(&args, &"completed".to_string());
+    let only_completed: bool = cli::Arg::get_flag(&args, &"done".to_string());
 
     todo_list.list_items(tag, only_completed);
 
