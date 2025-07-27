@@ -35,7 +35,7 @@ impl Config {
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("home directory not set: {}", e),
+                    format!("home directory not set: {e}"),
                 )
             })?;
 
@@ -82,7 +82,7 @@ impl TodoList {
         }
 
         let data = fs::read_to_string(&path)
-            .map_err(|e| format!("error: failed to read todo file: {}", e))?;
+            .map_err(|e| format!("error: failed to read todo file: {e}"))?;
 
         if data.trim().is_empty() {
             return Ok(TodoList::new());
@@ -100,7 +100,7 @@ impl TodoList {
     }
 
     fn add_item(&mut self, desc: String, tag: &Option<String>) {
-        let id = Self::generate_short_hash(&desc, &tag);
+        let id = Self::generate_short_hash(&desc, tag);
         let new_item = TodoItem {
             hash: id.clone(),
             desc: desc.clone(),
@@ -115,9 +115,9 @@ impl TodoList {
             .unwrap()
             .tag
             .as_ref()
-            .map(|t| format!(" #{}", t))
+            .map(|t| format!(" #{t}"))
             .unwrap_or_default();
-        println!("Added: '{}'{} [{}]", desc, tag_display, id);
+        println!("Added: '{desc}'{tag_display} [{id}]");
     }
 
     fn rm_item(&mut self, hash: &str) -> Option<TodoItem> {
@@ -144,7 +144,7 @@ impl TodoList {
         let path = Config::get_path()?;
 
         let serialized = serde_json::to_string_pretty(&self)
-            .map_err(|e| format!("error: failed to serialize todo data: {}", e))?;
+            .map_err(|e| format!("error: failed to serialize todo data: {e}"))?;
         fs::write(&path, serialized).map_err(|e| {
             format!(
                 "error: failed to write to todo file ({}): {}",
@@ -161,7 +161,7 @@ impl TodoList {
                 .items
                 .iter()
                 .filter(|p| p.tag == tag)
-                .map(|p| p.clone())
+                .cloned()
                 .collect(),
             None => self.items.clone(),
         };
@@ -190,7 +190,7 @@ impl TodoList {
                 item.hash,
                 item.tag
                     .as_ref()
-                    .map_or(String::new(), |tag| format!("\x1b[36m#{}\x1b[0m", tag)),
+                    .map_or(String::new(), |tag| format!("\x1b[36m#{tag}\x1b[0m")),
                 desc,
             );
         }
@@ -210,7 +210,7 @@ impl TodoList {
             .hash(&mut hasher);
 
         let hash = hasher.finish();
-        format!("{:x}", hash)[..7].to_string()
+        format!("{hash:x}")[..7].to_string()
     }
 
     fn mark_done(&mut self, hash: &str) -> Result<usize, MarkDoneError> {
@@ -224,8 +224,7 @@ impl TodoList {
 
         match matching_items.len() {
             0 => Err(MarkDoneError::NotFound(format!(
-                "warning: no todo found with hash' {}'",
-                hash
+                "warning: no todo found with hash' {hash}'",
             ))),
             1 => {
                 let index = matching_items[0];
@@ -269,8 +268,7 @@ fn help() -> Result<(), Box<dyn Error>> {
 fn add(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     if !args
         .iter()
-        .find(|entry| matches!(entry, cli::Arg::Value { .. }))
-        .is_some()
+        .any(|entry| matches!(entry, cli::Arg::Value { .. }))
     {
         return Err("'add' command requires at least one entry".into());
     }
@@ -379,7 +377,7 @@ fn edit() -> Result<(), Box<dyn Error>> {
     let status = Command::new(&editor).arg(temp_file.path()).status()?;
 
     if !status.success() {
-        return Err(format!("Editor '{}' exited with an error. Make sure your EDITOR environment variable is set correctly.", editor).into());
+        return Err(format!("Editor '{editor}' exited with an error. Make sure your EDITOR environment variable is set correctly.").into());
     }
 
     let edited_content = fs::read_to_string(temp_file.path())?;
@@ -475,7 +473,7 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
         match todo_list.mark_done(&prefix) {
             Ok(_) => {
                 completed_count += 1;
-                println!("Marked todo [{}] as done ✓", prefix);
+                println!("Marked todo [{prefix}] as done");
             }
             Err(MarkDoneError::NotFound(msg)) => {
                 errors.push(msg);
@@ -485,11 +483,10 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
             }
             Err(MarkDoneError::MultipleMatches(matched_prefix, matches)) => {
                 println!(
-                    "Multiple todos found matching '{}', please be more specific:",
-                    matched_prefix
+                    "Multiple todos found matching '{matched_prefix}', please be more specific:",
                 );
                 for (hash, desc) in matches {
-                    println!("[{}] {}", hash, desc);
+                    println!("[{hash}] {desc}");
                 }
             }
         }
@@ -501,7 +498,7 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
 
     if !errors.is_empty() {
         for error in &errors {
-            eprintln!("{}", error);
+            eprintln!("{error}");
         }
         if completed_count == 0 {
             return Err("No todos were marked as done".into());
@@ -509,7 +506,7 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     }
 
     if completed_count > 0 {
-        println!("Successfully marked {} todo(s) as done!", completed_count);
+        println!("Successfully marked {completed_count} todo(s) as done!");
     }
 
     Ok(())
@@ -518,5 +515,5 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
 fn version() {
     let env = env!("CARGO_PKG_VERSION");
     let name = env!("CARGO_PKG_NAME");
-    println!("{} version {}", name, env);
+    println!("{name} version {env}");
 }

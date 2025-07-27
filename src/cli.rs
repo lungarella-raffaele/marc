@@ -103,7 +103,7 @@ impl FromStr for Subcommand {
             "done" => Ok(Subcommand::Done),
             "--help" => Ok(Subcommand::Help),
             "--version" => Ok(Subcommand::Version),
-            _ => return Err(format!("Unknown subcommand: {}", s)),
+            _ => Err(format!("Unknown subcommand: {s}")),
         }
     }
 }
@@ -117,13 +117,13 @@ pub enum Arg {
 }
 
 impl Arg {
-    pub fn get_option(args: &Vec<Arg>, option_name: &String) -> Option<String> {
+    pub fn get_option(args: &[Arg], option_name: &String) -> Option<String> {
         args.iter().find_map(|entry| match entry {
             Arg::Option { name, value } if name == option_name => Some(value.clone()),
             _ => None,
         })
     }
-    pub fn get_flag(args: &Vec<Arg>, flag_name: &String) -> bool {
+    pub fn get_flag(args: &[Arg], flag_name: &String) -> bool {
         args.iter()
             .any(|entry| matches!(entry, Arg::Flag(str) if str == flag_name))
     }
@@ -162,10 +162,10 @@ impl CommandLine {
         let args = match Self::parse_args(rem_args, arg_spec) {
             Ok(args) => args,
             Err(ParseError::Missing(arg)) => {
-                return Err(format!("switch \"{}\" requires a value", arg).into());
+                return Err(format!("switch \"{arg}\" requires a value").into());
             }
             Err(ParseError::UnknownArg(arg)) => {
-                return Err(format!("unknown argument \"{}\" for {:#?}", arg, subcommand).into());
+                return Err(format!("unknown argument \"{arg}\" for {subcommand:#?}").into());
             }
         };
 
@@ -191,10 +191,7 @@ impl CommandLine {
 
         while i < tokens.len() {
             let token = &tokens[i];
-            if token.starts_with("--") {
-                // long format
-                let arg_name = &token[2..];
-
+            if let Some(arg_name) = token.strip_prefix("--") {
                 match flags.iter().find(|flag| flag.long == arg_name) {
                     Some(str) => {
                         args.push(Arg::Flag(str.name.to_string()));
@@ -217,10 +214,10 @@ impl CommandLine {
                         None => return Err(ParseError::UnknownArg(arg_name.to_string())),
                     },
                 }
-            } else if token.starts_with("-") {
+            } else if let Some(arg) = token.strip_prefix("-") {
                 // short format
                 // TODO: Implement concatened feature
-                let arg = &token[1..];
+                // let arg = &token[1..];
 
                 for a in arg.chars() {
                     // flags
