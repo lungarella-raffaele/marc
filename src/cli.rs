@@ -1,3 +1,4 @@
+use std::io::{self, BufRead, BufReader, IsTerminal};
 use std::str::FromStr;
 
 macro_rules! define_args {
@@ -43,6 +44,12 @@ macro_rules! define_args {
                                 short: $short,
                                 long: $long,
                                 kind: ArgKind::$kind,
+                            },
+                            ArgSpec {
+                                name: "help",
+                                short: 'h',
+                                long: "--help",
+                                kind: ArgKind::Flag
                             }
                         ),*
                     ]
@@ -52,7 +59,7 @@ macro_rules! define_args {
     };
 }
 
-// TODO: Implement from_str directly in macro
+// TODO: Implement from_str and to_str directly in macro
 define_args! {
     Add: {
         tag: {
@@ -101,9 +108,9 @@ impl FromStr for Subcommand {
             "log" => Ok(Subcommand::Log),
             "edit" => Ok(Subcommand::Edit),
             "done" => Ok(Subcommand::Done),
-            "--help" => Ok(Subcommand::Help),
-            "--version" => Ok(Subcommand::Version),
-            _ => Err(format!("Unknown subcommand: {s}")),
+            "--help" | "help" | "-h" => Ok(Subcommand::Help),
+            "--version" | "v" => Ok(Subcommand::Version),
+            _ => Err(format!("unknown subcommand \"{s}\"")),
         }
     }
 }
@@ -144,19 +151,25 @@ enum ParseError {
 impl CommandLine {
     pub fn new(tokens: Vec<String>) -> Result<CommandLine, Box<dyn std::error::Error>> {
         if tokens.len() == 1 {
-            return Err("Invalid use".into());
+            return Err("Invalid use".into()); // TODO: create an error enum and
         }
 
         let subcommand = match tokens.get(1) {
             Some(token) => match Subcommand::from_str(token) {
                 Ok(cmd) => cmd,
-                Err(_) => return Err("invalid subcommand".into()),
+                Err(_) => return Err(format!("unknown subcommand \"{token}\"").into()),
             },
             None => return Err("command not found".into()),
         };
 
         // args without program name and subcommand
-        let rem_args = tokens[2..].to_vec();
+        let mut rem_args = tokens[2..].to_vec();
+
+        if let Some(stdin_args) = read_stdin() {
+            println!("{:?}", stdin_args);
+            rem_args.extend(stdin_args);
+        }
+
         let arg_spec = get_arg_specs_for(subcommand);
 
         let args = match Self::parse_args(rem_args, arg_spec) {
@@ -215,12 +228,7 @@ impl CommandLine {
                     },
                 }
             } else if let Some(arg) = token.strip_prefix("-") {
-                // short format
-                // TODO: Implement concatened feature
-                // let arg = &token[1..];
-
                 for a in arg.chars() {
-                    // flags
                     match flags.iter().find(|flag| flag.short == a) {
                         Some(str) => {
                             args.push(Arg::Flag(str.name.to_string()));
@@ -245,7 +253,6 @@ impl CommandLine {
                     }
                 }
             } else {
-                // simple values
                 args.push(Arg::Value(token.to_string()));
             }
             i += 1;
@@ -345,4 +352,21 @@ mod tests {
         let cmd_line = CommandLine::new(input);
         assert!(cmd_line.is_err());
     }
+}
+
+pub fn read_stdin() -> Option<Vec<String>> {
+    if !io::stdin().is_terminal() {
+        let stdin = io::stdin();
+        let reader = BufReader::new(stdin.lock());
+
+        return Some(
+            reader
+                .lines() // TODO: Currently parsing with lines. To implement a parser similar to the Unix one
+                .map(|line| line.unwrap_or_default().trim().to_string())
+                .filter(|line| !line.is_empty()) // Skip empty lines
+                .collect(),
+        );
+    }
+
+    None
 }

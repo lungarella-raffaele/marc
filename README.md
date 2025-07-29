@@ -16,26 +16,26 @@ cargo build --release
 - [ ] only print escaped characters if the output is not being redirected
 - [ ] if --no-input is passed, don’t prompt or do anything interactive
 - [x] `add` adds a todo
-  - [x] should accept a `--tag` flag
-  - [x] possibility to add more todos in one command `marc add 'first note' 'second note'`
-  - [ ] should prompt the user when there is not stdin or input
-  - [ ] should accept stdin by default if the user provides an empy input, (or by using '-')
+    - [x] should accept a `--tag` flag
+    - [x] possibility to add more todos in one command `marc add 'first note' 'second note'`
+    - [x] should accept stdin by default if the user provides an empy input
+    - [ ] consider adding '-' to accept stdin
 - [x] `log` lists todos
-  - [x] should have a `--tag` flag to list todo with the same tag
-  - [ ] should have flags `undone` `--no-undone`, by defaults it should show completed and not completed todos
-  - [ ] should have a `--plain -p` flag
+    - [x] should have a `--tag` flag to list todo with the same tag
+    - [x] should have flags `--done` `--undone`, by defaults it should show completed and not completed todos
+    - [ ] should have a `--plain -p` flag
 - [ ] `tag` handles tags
-  - [ ] flag --create -c to create a new tag
-  - [ ] without any arguments it lists all available tags
-  - [ ] --prune -p to delete all tags without a corresponding todo
+    - [ ] flag --create -c to create a new tag
+    - [ ] without any arguments it lists all available tags
+    - [ ] --prune -p to delete all tags without a corresponding todo
 - [x] `edit` interactive editing of todos
-  - [ ] should accept --tag flag
-  - [x] ability to drop todo
-  - [ ] ability to complete a todo
-  - [ ] ability to edit a todo, (content and tag)
+    - [ ] should accept --tag flag
+    - [x] ability to drop todo
+    - [ ] ability to complete a todo
+    - [ ] ability to edit a todo, (content and tag)
 - [x] `done` command, marks an entry as completed
 - [x] `rm` command, removes an entry
-  - [x] should accept `--done` to remove all done items
+    - [x] should accept `--done` to remove all done items
 - [ ] consider writing manual for subcommands, e.g.
 
 ```

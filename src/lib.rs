@@ -1,4 +1,3 @@
-use crate::cli::CommandLine;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::env::{self};
@@ -12,7 +11,13 @@ use tempfile::NamedTempFile;
 mod cli;
 
 pub fn run(args: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let cmd_line = CommandLine::new(args)?;
+    let cmd_line = cli::CommandLine::new(args)?;
+
+    let has_help = cli::Arg::get_flag(&cmd_line.args, &"help".to_string());
+
+    if has_help {
+        return help();
+    }
 
     match cmd_line.subcommand {
         cli::Subcommand::Add => add(cmd_line.args)?,
@@ -155,7 +160,7 @@ impl TodoList {
         Ok(())
     }
 
-    fn list_items(&self, tag: Option<String>, completed: bool) {
+    fn list_items(&self, tag: Option<String>, only_done: bool, only_undone: bool) {
         let mut entries = match tag {
             Some(_) => self
                 .items
@@ -166,8 +171,10 @@ impl TodoList {
             None => self.items.clone(),
         };
 
-        if completed {
+        if only_done {
             entries.retain(|e| e.is_completed);
+        } else if only_undone {
+            entries.retain(|e| !e.is_completed);
         }
 
         if entries.is_empty() {
@@ -250,35 +257,23 @@ impl TodoList {
 
 /// Help command -- Displays all the commands, their usage and a short description
 fn help() -> Result<(), Box<dyn Error>> {
-    println!("marc - A simple todo list manager\n");
-    println!("USAGE:");
-    println!("    marc <COMMAND> [OPTIONS]\n");
-    println!("COMMANDS:");
-    println!("    add [--tag TAG] <todo>...   Add one or more todos");
-    println!("    log                         List all todos");
-    println!("    edit                        Interactive edit mode");
-    println!("    done <hash>...              Mark todos as complete by hash ID");
-    println!("    rm <hash>...                Deletes todos by hash ID");
-    println!("    --help, -h                  Show this help message");
-    println!("    --version, -v               Show version information\n");
+    println!("read the source code");
     Ok(())
 }
 
 /// Add command -- Adds entries to a list
 fn add(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
-    if !args
+    let has_values = args
         .iter()
-        .any(|entry| matches!(entry, cli::Arg::Value { .. }))
-    {
+        .any(|entry| matches!(entry, cli::Arg::Value { .. }));
+
+    if !has_values {
         return Err("'add' command requires at least one entry".into());
     }
 
     let mut todo_list = TodoList::load_from_file()?;
 
-    let tag: Option<String> = args.iter().find_map(|entry| match entry {
-        cli::Arg::Option { name, value } if name == "tag" => Some(value.clone()),
-        _ => None,
-    });
+    let tag = cli::Arg::get_option(&args, &"tag".to_string());
 
     let todos_to_add: Vec<String> = args
         .iter()
@@ -304,9 +299,10 @@ fn log(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
     let todo_list = TodoList::load_from_file()?;
 
     let tag: Option<String> = cli::Arg::get_option(&args, &"tag".to_string());
-    let only_completed: bool = cli::Arg::get_flag(&args, &"done".to_string());
+    let only_done: bool = cli::Arg::get_flag(&args, &"done".to_string());
+    let only_undone: bool = cli::Arg::get_flag(&args, &"undone".to_string());
 
-    todo_list.list_items(tag, only_completed);
+    todo_list.list_items(tag, only_done, only_undone);
 
     Ok(())
 }
@@ -473,7 +469,6 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
         match todo_list.mark_done(&prefix) {
             Ok(_) => {
                 completed_count += 1;
-                println!("Marked todo [{prefix}] as done");
             }
             Err(MarkDoneError::NotFound(msg)) => {
                 errors.push(msg);
@@ -503,10 +498,6 @@ fn done(args: Vec<cli::Arg>) -> Result<(), Box<dyn Error>> {
         if completed_count == 0 {
             return Err("No todos were marked as done".into());
         }
-    }
-
-    if completed_count > 0 {
-        println!("Successfully marked {completed_count} todo(s) as done!");
     }
 
     Ok(())
